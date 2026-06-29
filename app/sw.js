@@ -4,8 +4,8 @@
    Network-first para tiles de mapa
 ═══════════════════════════════════════ */
 
-const CACHE_NAME   = 'trailrun-v1';
-const TILE_CACHE   = 'trailrun-tiles-v1';
+const CACHE_NAME   = 'trailrun-v2';
+const TILE_CACHE   = 'trailrun-tiles-v2';
 
 const ASSETS = [
   './',
@@ -15,6 +15,8 @@ const ASSETS = [
   './manifest.json',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://unpkg.com/deck.gl@9.0.0/dist.min.js',
+  'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
 ];
 
 // ─── INSTALL ─────────────────────────────────────────────────────────────────
@@ -42,6 +44,12 @@ self.addEventListener('activate', e => {
 // ─── FETCH ───────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', e => {
   const url = e.request.url;
+
+  // Tiles CARTO (mapa 3D): misma estrategia que OSM
+  if (url.includes('basemaps.cartocdn.com') && !url.includes('style.json')) {
+    e.respondWith(tileStrategy(e.request));
+    return;
+  }
 
   // Tiles OSM: Cache con expiración (stale-while-revalidate)
   if (url.includes('tile.openstreetmap.org')) {

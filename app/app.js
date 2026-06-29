@@ -26,6 +26,8 @@ const State = {
   currentRun: null,
   // Ruta abierta en el modal
   modalRun: null,
+  // Ruta cargada en vista 3D
+  activeRun3D: null,
 };
 
 // ─── BASE DE DATOS (IndexedDB) ────────────────────────────────────────────────
@@ -807,6 +809,32 @@ function bindEvents() {
     await loadHistory();
   });
 
+  // Resumen: ver en 3D
+  document.getElementById('btn-view-3d-summary').addEventListener('click', () => {
+    if (State.currentRun) open3DView(State.currentRun);
+  });
+
+  // Modal historial: ver en 3D
+  document.getElementById('btn-modal-3d').addEventListener('click', () => {
+    if (State.modalRun) {
+      document.getElementById('modal-run-detail').classList.add('hidden');
+      open3DView(State.modalRun);
+    }
+  });
+
+  // Vista 3D: volver
+  document.getElementById('btn-3d-back').addEventListener('click', () => {
+    if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+    animPlaying = false;
+    // Volver al origen correcto
+    if (State.activeRun3D && State.currentRun && State.activeRun3D.id === State.currentRun.id) {
+      showScreen('screen-summary');
+    } else {
+      showScreen('screen-history');
+    }
+    State.activeRun3D = null;
+  });
+
   // Cerrar modal al hacer clic en el overlay
   document.getElementById('modal-run-detail').addEventListener('click', function(e) {
     if (e.target === this) {
@@ -842,3 +870,299 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FASE 2+3 — ELEVACIÓN SRTM + VISUALIZACIÓN 3D
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── SUAVIZADO DE ELEVACIÓN (media móvil) ─────────────────────────────────────
+// Elimina artefactos del sensor GPS sin perder la forma general del perfil.
+// window=7 es un buen compromiso para tracks de running (1 punto cada ~3-5s).
+function smoothElevation(alts, window = 7) {
+  const half = Math.floor(window / 2);
+  return alts.map((_, i) => {
+    const slice = alts.slice(Math.max(0, i - half), Math.min(alts.length, i + half + 1));
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+}
+
+// ─── OPEN-ELEVATION API ───────────────────────────────────────────────────────
+// API gratuita y open-source que devuelve altitud SRTM para listas de coords.
+// Límite: 2000 puntos por petición. Si la ruta tiene más, la submuestreamos.
+const OPEN_ELEV_URL = 'https://api.open-elevation.com/api/v1/lookup';
+const MAX_ELEV_POINTS = 300; // conservador para móvil
+
+async function fetchSRTMElevation(points) {
+  // Submuestrear si hay demasiados puntos
+  let sample = points;
+  let step = 1;
+  if (points.length > MAX_ELEV_POINTS) {
+    step = Math.ceil(points.length / MAX_ELEV_POINTS);
+    sample = points.filter((_, i) => i % step === 0);
+    // Asegurar que el último punto esté incluido
+    if (sample[sample.length - 1] !== points[points.length - 1]) {
+      sample.push(points[points.length - 1]);
+    }
+  }
+
+  const locations = sample.map(p => ({ latitude: p.lat, longitude: p.lon }));
+
+  const resp = await fetch(OPEN_ELEV_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ locations }),
+  });
+
+  if (!resp.ok) throw new Error(`Open-Elevation error: ${resp.status}`);
+  const data = await resp.json();
+
+  // Mapear elevaciones SRTM de vuelta a todos los puntos (interpolación lineal)
+  const srtmAlts = data.results.map(r => r.elevation);
+  const smoothed  = smoothElevation(srtmAlts);
+
+  // Si submuestreamos, interpolar para el array completo
+  if (step === 1) {
+    return points.map((_, i) => smoothed[i]);
+  }
+
+  return points.map((_, i) => {
+    const sIdx  = i / step;
+    const lower = Math.floor(sIdx);
+    const upper = Math.min(lower + 1, smoothed.length - 1);
+    const t     = sIdx - lower;
+    return smoothed[lower] * (1 - t) + smoothed[upper] * t;
+  });
+}
+
+// ─── PREPARAR PUNTOS 3D ───────────────────────────────────────────────────────
+// Devuelve array de puntos enriquecidos con elevación SRTM suavizada,
+// distancia acumulada y pace por segmento.
+async function preparePoints3D(run, onProgress) {
+  onProgress('Consultando elevación SRTM…');
+  let elevations;
+  try {
+    elevations = await fetchSRTMElevation(run.points);
+  } catch (e) {
+    console.warn('[3D] Open-Elevation falló, usando altitud GPS:', e);
+    onProgress('Usando altitud GPS (SRTM no disponible)…');
+    const rawAlts = run.points.map(p => p.alt ?? 0);
+    elevations = smoothElevation(rawAlts);
+  }
+
+  onProgress('Calculando métricas de ruta…');
+
+  let cumDist = 0;
+  return run.points.map((p, i) => {
+    if (i > 0) {
+      cumDist += haversine(
+        run.points[i-1].lat, run.points[i-1].lon,
+        p.lat, p.lon
+      );
+    }
+    return {
+      lat:     p.lat,
+      lon:     p.lon,
+      alt:     elevations[i],
+      ts:      p.ts,
+      cumDist, // km acumulados hasta este punto
+    };
+  });
+}
+
+// ─── MOTOR deck.gl ────────────────────────────────────────────────────────────
+let deckInstance  = null;
+let animFrame     = null;
+let animPlaying   = false;
+let animProgress  = 0;       // 0..1
+const ANIM_SPEED  = 0.0008;  // fracción de ruta por frame (~60fps → ~20s para 5km)
+
+function initDeck(points3D) {
+  const container = document.getElementById('deck-container');
+  container.innerHTML = '';
+
+  const { DeckGL, PathLayer, ScatterplotLayer, MapView } = deck;
+
+  // Centro de la ruta
+  const lats = points3D.map(p => p.lat);
+  const lons = points3D.map(p => p.lon);
+  const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
+
+  // Coordenadas completas para la línea de fondo
+  const fullPath = points3D.map(p => [p.lon, p.lat, p.alt]);
+
+  deckInstance = new DeckGL({
+    container,
+    mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    initialViewState: {
+      longitude: centerLon,
+      latitude:  centerLat,
+      zoom: 14,
+      pitch: 55,
+      bearing: -20,
+    },
+    controller: true,
+    layers: buildLayers(points3D, fullPath, 0),
+  });
+}
+
+function buildLayers(points3D, fullPath, progress) {
+  const { PathLayer, ScatterplotLayer } = deck;
+  const cutIdx = Math.floor(progress * (points3D.length - 1));
+  const traveled = fullPath.slice(0, cutIdx + 1);
+  const remaining = fullPath.slice(cutIdx);
+
+  const layers = [
+    // Ruta completa (atenuada)
+    new PathLayer({
+      id: 'path-full',
+      data: [{ path: fullPath }],
+      getPath: d => d.path,
+      getColor: [191, 255, 0, 40],
+      getWidth: 4,
+      widthUnits: 'pixels',
+      pickable: false,
+    }),
+    // Tramo recorrido
+    new PathLayer({
+      id: 'path-traveled',
+      data: [{ path: traveled }],
+      getPath: d => d.path,
+      getColor: [191, 255, 0, 220],
+      getWidth: 5,
+      widthUnits: 'pixels',
+      pickable: false,
+    }),
+  ];
+
+  // Marcador de posición actual
+  if (cutIdx < points3D.length) {
+    const cur = points3D[cutIdx];
+    layers.push(
+      new ScatterplotLayer({
+        id: 'position-marker',
+        data: [{ pos: [cur.lon, cur.lat, cur.alt + 3] }],
+        getPosition: d => d.pos,
+        getRadius: 6,
+        radiusUnits: 'pixels',
+        getFillColor: [191, 255, 0, 255],
+        stroked: true,
+        getLineColor: [0, 0, 0, 200],
+        getLineWidth: 2,
+        lineWidthUnits: 'pixels',
+        pickable: false,
+      })
+    );
+  }
+
+  return layers;
+}
+
+function animTick(points3D, fullPath) {
+  if (!animPlaying) return;
+
+  animProgress = Math.min(animProgress + ANIM_SPEED, 1);
+  const cutIdx = Math.floor(animProgress * (points3D.length - 1));
+  const cur    = points3D[cutIdx];
+
+  // Actualizar deck
+  deckInstance.setProps({ layers: buildLayers(points3D, fullPath, animProgress) });
+
+  // Actualizar HUD
+  document.getElementById('anim-km').textContent       = cur.cumDist.toFixed(2);
+  document.getElementById('anim-alt').textContent      = Math.round(cur.alt);
+  document.getElementById('anim-progress').textContent = `${Math.round(animProgress * 100)}%`;
+  document.getElementById('progress-bar-fill').style.width = `${animProgress * 100}%`;
+
+  if (animProgress >= 1) {
+    animPlaying = false;
+    updatePlayPauseIcon(false);
+    return;
+  }
+
+  animFrame = requestAnimationFrame(() => animTick(points3D, fullPath));
+}
+
+function updatePlayPauseIcon(playing) {
+  document.getElementById('icon-play').style.display  = playing ? 'none' : '';
+  document.getElementById('icon-pause').style.display = playing ? '' : 'none';
+}
+
+// ─── ENTRADA A VISTA 3D ───────────────────────────────────────────────────────
+async function open3DView(run) {
+  State.activeRun3D = run;
+
+  // Mostrar pantalla y panel de carga
+  showScreen('screen-3d');
+  document.getElementById('loading-panel').style.display = 'flex';
+  document.getElementById('anim-panel').style.display    = 'none';
+  document.getElementById('progress-bar-wrap').style.display = 'none';
+  document.getElementById('view3d-title').textContent = formatDate(run.date);
+
+  // Limpiar animación previa
+  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+  animPlaying  = false;
+  animProgress = 0;
+
+  function onProgress(msg) {
+    document.getElementById('loading-text').textContent = msg;
+  }
+
+  try {
+    const points3D = await preparePoints3D(run, onProgress);
+    const fullPath  = points3D.map(p => [p.lon, p.lat, p.alt]);
+
+    onProgress('Renderizando mapa 3D…');
+    // Pequeño delay para que el mensaje de "renderizando" sea visible
+    await new Promise(r => setTimeout(r, 200));
+
+    initDeck(points3D);
+
+    // Ocultar carga, mostrar controles
+    document.getElementById('loading-panel').style.display      = 'none';
+    document.getElementById('anim-panel').style.display         = 'flex';
+    document.getElementById('progress-bar-wrap').style.display  = 'block';
+    updatePlayPauseIcon(false);
+
+    // Bind controles de animación (solo la primera vez por run)
+    const btnToggle  = document.getElementById('btn-anim-toggle');
+    const btnRestart = document.getElementById('btn-anim-restart');
+
+    // Reemplazar listeners para evitar duplicados
+    const newToggle = btnToggle.cloneNode(true);
+    const newRestart = btnRestart.cloneNode(true);
+    btnToggle.parentNode.replaceChild(newToggle, btnToggle);
+    btnRestart.parentNode.replaceChild(newRestart, btnRestart);
+
+    newToggle.addEventListener('click', () => {
+      animPlaying = !animPlaying;
+      updatePlayPauseIcon(animPlaying);
+      if (animPlaying) {
+        if (animProgress >= 1) animProgress = 0; // reiniciar si llegó al final
+        animFrame = requestAnimationFrame(() => animTick(points3D, fullPath));
+      } else {
+        if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+      }
+    });
+
+    newRestart.addEventListener('click', () => {
+      if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+      animProgress = 0;
+      animPlaying  = true;
+      updatePlayPauseIcon(true);
+      deckInstance.setProps({ layers: buildLayers(points3D, fullPath, 0) });
+      document.getElementById('progress-bar-fill').style.width = '0%';
+      animFrame = requestAnimationFrame(() => animTick(points3D, fullPath));
+    });
+
+    // Autoplay
+    animPlaying = true;
+    updatePlayPauseIcon(true);
+    animFrame = requestAnimationFrame(() => animTick(points3D, fullPath));
+
+  } catch (err) {
+    console.error('[3D]', err);
+    document.getElementById('loading-text').textContent = `Error: ${err.message}`;
+  }
+}
+
