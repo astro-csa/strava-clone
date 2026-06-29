@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TrailRun">
+  <title>TrailRun</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     PANTALLA 0: SPLASH
+═══════════════════════════════════════ -->
+<div id="screen-splash" class="screen active">
+  <div class="splash-inner">
+    <div class="splash-logo">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <path d="M8 40 L20 12 L28 28 L34 20 L40 40" stroke="#BFFF00" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="40" cy="40" r="3" fill="#BFFF00"/>
+      </svg>
+    </div>
+    <h1 class="splash-title">TrailRun</h1>
+    <p class="splash-sub">GPS tracker personal</p>
+    <button class="btn-primary" id="btn-enter">Comenzar</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     PANTALLA 1: INICIO
+═══════════════════════════════════════ -->
+<div id="screen-home" class="screen">
+  <header class="app-header">
+    <div class="logo-small">
+      <svg width="22" height="22" viewBox="0 0 48 48" fill="none">
+        <path d="M8 40 L20 12 L28 28 L34 20 L40 40" stroke="#BFFF00" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="40" cy="40" r="3" fill="#BFFF00"/>
+      </svg>
+      <span>TrailRun</span>
+    </div>
+    <button class="icon-btn" id="btn-to-history" aria-label="Historial">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+        <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>
+      </svg>
+    </button>
+  </header>
+
+  <main class="home-main">
+    <div class="greeting-block">
+      <p class="label-muted">Sesión de hoy</p>
+      <h2 class="greeting-title" id="greeting-date">—</h2>
+    </div>
+
+    <div class="stats-row" id="home-stats">
+      <div class="stat-card">
+        <span class="stat-value" id="home-total-runs">—</span>
+        <span class="stat-label">Rutas</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="home-total-km">—</span>
+        <span class="stat-label">km totales</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="home-best-pace">—</span>
+        <span class="stat-label">mejor pace</span>
+      </div>
+    </div>
+
+    <div class="gps-status-card" id="gps-status-card">
+      <div class="gps-dot" id="gps-dot"></div>
+      <span id="gps-status-text">Comprobando GPS…</span>
+    </div>
+
+    <button class="btn-start" id="btn-start-run">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      Iniciar carrera
+    </button>
+
+    <p class="hint-text" id="gps-hint"></p>
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════
+     PANTALLA 2: TRACKING ACTIVO
+═══════════════════════════════════════ -->
+<div id="screen-tracking" class="screen">
+  <!-- Mapa de fondo -->
+  <div id="map"></div>
+
+  <!-- HUD superior -->
+  <div class="hud-top">
+    <div class="hud-timer" id="hud-timer">00:00:00</div>
+    <div class="hud-status">
+      <div class="live-dot"></div>
+      <span>EN VIVO</span>
+    </div>
+  </div>
+
+  <!-- Panel de métricas tipo terminal -->
+  <div class="terminal-panel" id="terminal-panel">
+    <div class="terminal-header">
+      <div class="terminal-dots">
+        <span></span><span></span><span></span>
+      </div>
+      <span class="terminal-title">metrics.live</span>
+    </div>
+    <div class="terminal-grid">
+      <div class="terminal-metric">
+        <span class="tm-value" id="t-distance">0.00</span>
+        <span class="tm-label">km</span>
+      </div>
+      <div class="terminal-metric">
+        <span class="tm-value" id="t-pace">--:--</span>
+        <span class="tm-label">min/km</span>
+      </div>
+      <div class="terminal-metric">
+        <span class="tm-value" id="t-elevation">0</span>
+        <span class="tm-label">m alt.</span>
+      </div>
+      <div class="terminal-metric">
+        <span class="tm-value" id="t-gain">+0</span>
+        <span class="tm-label">m desnivel</span>
+      </div>
+    </div>
+
+    <!-- Log de puntos en tiempo real -->
+    <div class="terminal-log" id="terminal-log">
+      <p class="log-line log-system">▶ Sesión iniciada. Esperando señal GPS…</p>
+    </div>
+  </div>
+
+  <!-- Controles inferiores -->
+  <div class="tracking-controls">
+    <button class="ctrl-btn ctrl-pause" id="btn-pause">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+      </svg>
+    </button>
+    <button class="ctrl-btn ctrl-stop" id="btn-stop">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="5" y="5" width="14" height="14" rx="2"/>
+      </svg>
+    </button>
+    <button class="ctrl-btn ctrl-center" id="btn-center" aria-label="Centrar mapa">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     PANTALLA 3: RESUMEN DE RUTA
+═══════════════════════════════════════ -->
+<div id="screen-summary" class="screen">
+  <div class="summary-inner">
+    <header class="summary-header">
+      <button class="icon-btn" id="btn-summary-back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+      </button>
+      <h2 class="summary-title">Resumen</h2>
+      <button class="icon-btn" id="btn-export-gpx" title="Exportar GPX">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+    </header>
+
+    <div class="summary-map-container">
+      <div id="summary-map"></div>
+    </div>
+
+    <div class="summary-stats-grid">
+      <div class="sum-stat main">
+        <span class="sum-value" id="sum-distance">0.00</span>
+        <span class="sum-label">kilómetros</span>
+      </div>
+      <div class="sum-stat main">
+        <span class="sum-value" id="sum-time">00:00:00</span>
+        <span class="sum-label">tiempo total</span>
+      </div>
+      <div class="sum-stat">
+        <span class="sum-value" id="sum-pace">--:--</span>
+        <span class="sum-label">pace medio</span>
+      </div>
+      <div class="sum-stat">
+        <span class="sum-value" id="sum-gain">+0 m</span>
+        <span class="sum-label">desnivel pos.</span>
+      </div>
+      <div class="sum-stat">
+        <span class="sum-value" id="sum-loss">−0 m</span>
+        <span class="sum-label">desnivel neg.</span>
+      </div>
+      <div class="sum-stat">
+        <span class="sum-value" id="sum-points">0</span>
+        <span class="sum-label">puntos GPS</span>
+      </div>
+    </div>
+
+    <!-- Elevación chart -->
+    <div class="elevation-section">
+      <p class="section-label">Perfil de elevación</p>
+      <canvas id="elevation-chart" height="80"></canvas>
+    </div>
+
+    <div class="summary-actions">
+      <button class="btn-primary" id="btn-save-run">Guardar ruta</button>
+      <button class="btn-secondary" id="btn-discard-run">Descartar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     PANTALLA 4: HISTORIAL
+═══════════════════════════════════════ -->
+<div id="screen-history" class="screen">
+  <header class="app-header">
+    <button class="icon-btn" id="btn-history-back">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    </button>
+    <span class="header-title">Historial</span>
+    <div style="width:36px"></div>
+  </header>
+
+  <div class="history-content">
+    <div id="history-list" class="history-list">
+      <!-- inyectado por JS -->
+    </div>
+    <div id="history-empty" class="history-empty hidden">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <path d="M8 40 L20 12 L28 28 L34 20 L40 40" stroke="var(--border)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <p>Aún no hay rutas guardadas</p>
+      <p class="hint-text">Completa tu primera carrera para verla aquí</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MODAL: DETALLE DE RUTA HISTÓRICA
+═══════════════════════════════════════ -->
+<div id="modal-run-detail" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="modal-run-title">Ruta</h3>
+      <button class="icon-btn" id="btn-modal-close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="modal-map" class="modal-map"></div>
+    <div class="modal-stats">
+      <div class="modal-stat"><span id="md-distance">—</span><small>km</small></div>
+      <div class="modal-stat"><span id="md-time">—</span><small>tiempo</small></div>
+      <div class="modal-stat"><span id="md-pace">—</span><small>pace</small></div>
+      <div class="modal-stat"><span id="md-gain">—</span><small>desnivel</small></div>
+    </div>
+    <canvas id="modal-elev-chart" height="60" style="width:100%;margin-top:12px"></canvas>
+    <div class="modal-actions">
+      <button class="btn-primary btn-sm" id="btn-modal-export">Exportar GPX</button>
+      <button class="btn-danger btn-sm" id="btn-modal-delete">Eliminar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
