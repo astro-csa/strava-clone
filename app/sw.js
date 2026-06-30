@@ -4,7 +4,7 @@
    Network-first para tiles de mapa
 ═══════════════════════════════════════ */
 
-const CACHE_NAME   = 'trailrun-v3';
+const CACHE_NAME   = 'trailrun-v4';
 const TILE_CACHE   = 'trailrun-tiles-v2';
 
 const ASSETS = [
@@ -44,6 +44,12 @@ self.addEventListener('activate', e => {
 // ─── FETCH ───────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', e => {
   const url = e.request.url;
+
+  // La Cache API solo admite peticiones GET. Las POST (ej. Open-Elevation)
+  // deben ir directas a la red sin pasar por ninguna estrategia de caché.
+  if (e.request.method !== 'GET') {
+    return; // deja que el navegador la maneje sin interceptar
+  }
 
   // Tiles CARTO (mapa 3D): misma estrategia que OSM
   if (url.includes('basemaps.cartocdn.com') && !url.includes('style.json')) {
