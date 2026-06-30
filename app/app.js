@@ -894,6 +894,12 @@ function bindEvents() {
   document.getElementById('btn-3d-back').addEventListener('click', () => {
     if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
     animPlaying = false;
+    // Destruir la instancia de deck.gl/MapLibre al salir, no solo al
+    // volver a entrar — evita acumular contextos WebGL huérfanos.
+    if (deckInstance) {
+      try { deckInstance.finalize(); } catch {}
+      deckInstance = null;
+    }
     // Volver al origen correcto
     if (State.activeRun3D && State.currentRun && State.activeRun3D.id === State.currentRun.id) {
       showScreen('screen-summary');
@@ -1115,6 +1121,16 @@ let animProgress  = 0;       // 0..1
 const ANIM_SPEED  = 0.0008;  // fracción de ruta por frame (~60fps → ~20s para 5km)
 
 function initDeck(points3D) {
+  // Destruir cualquier instancia previa de deck.gl/MapLibre antes de crear
+  // una nueva. Sin esto, abrir la Vista 3D una segunda vez deja MapLibre
+  // apuntando a referencias DOM rotas del montaje anterior (el propio
+  // borrado manual de innerHTML no es suficiente, hace falta finalize()),
+  // lo que provoca "Invalid type: 'container' must be a String or HTMLElement".
+  if (deckInstance) {
+    try { deckInstance.finalize(); } catch (e) { console.warn('[3D] finalize previo falló:', e); }
+    deckInstance = null;
+  }
+
   const container = document.getElementById('deck-container');
   container.innerHTML = '';
 
