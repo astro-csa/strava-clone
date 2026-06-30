@@ -1110,6 +1110,7 @@ function buildLayers(points3D, fullPath, progress) {
 
 function animTick(points3D, fullPath) {
   if (!animPlaying) return;
+  if (points3D.length === 0) { animPlaying = false; return; }
 
   animProgress = Math.min(animProgress + ANIM_SPEED, 1);
   const cutIdx = Math.min(
@@ -1117,6 +1118,7 @@ function animTick(points3D, fullPath) {
     points3D.length - 1
   );
   const cur    = points3D[cutIdx];
+  if (!cur) { animPlaying = false; return; }
 
   // Actualizar deck
   deckInstance.setProps({ layers: buildLayers(points3D, fullPath, animProgress) });
@@ -1159,6 +1161,15 @@ async function open3DView(run) {
 
   function onProgress(msg) {
     document.getElementById('loading-text').textContent = msg;
+  }
+
+  // Guard de entrada: sin al menos 2 puntos GPS no hay ruta que animar.
+  // Sin esto, preparePoints3D devuelve un array vacío/de 1 elemento y
+  // initDeck/animTick acaban indexando fuera de rango más adelante.
+  if (!run.points || run.points.length < 2) {
+    onProgress(`Esta ruta tiene ${run.points?.length ?? 0} punto(s) GPS — insuficiente para animar`);
+    document.getElementById('loading-text').classList.add('loading-error');
+    return;
   }
 
   try {

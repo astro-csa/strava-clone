@@ -933,6 +933,10 @@ button { cursor: pointer; border: none; background: none; font-family: inherit; 
   letter-spacing: 0.04em;
 }
 
+.loading-text.loading-error {
+  color: var(--danger);
+}
+
 /* Panel de animación */
 .anim-panel {
   position: absolute;

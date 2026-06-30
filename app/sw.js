@@ -4,7 +4,7 @@
    Network-first para tiles de mapa
 ═══════════════════════════════════════ */
 
-const CACHE_NAME   = 'trailrun-v4';
+const CACHE_NAME   = 'trailrun-v5';
 const TILE_CACHE   = 'trailrun-tiles-v2';
 
 const ASSETS = [
