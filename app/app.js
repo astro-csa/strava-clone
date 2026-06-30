@@ -1258,9 +1258,14 @@ async function open3DView(run) {
   // Guard de entrada: sin al menos 2 puntos GPS no hay ruta que animar.
   // Sin esto, preparePoints3D devuelve un array vacío/de 1 elemento y
   // initDeck/animTick acaban indexando fuera de rango más adelante.
+  // El botón "volver" del HUD superior está siempre disponible (no se
+  // oculta nunca), así que el guard solo necesita dejar un mensaje claro.
   if (!run.points || run.points.length < 2) {
-    onProgress(`Esta ruta tiene ${run.points?.length ?? 0} punto(s) GPS — insuficiente para animar`);
+    document.getElementById('loading-text').textContent =
+      `Esta ruta tiene ${run.points?.length ?? 0} punto(s) GPS — insuficiente para animar`;
     document.getElementById('loading-text').classList.add('loading-error');
+    // Apaga el spinner de carga para que quede claro que no va a progresar
+    document.querySelector('#loading-panel .spinner')?.style.setProperty('animation', 'none');
     return;
   }
 
