@@ -183,6 +183,64 @@ function downloadGPX(run) {
   showToast('GPX exportado ✓');
 }
 
+// ─── IMPORTACIÓN GPX ─────────────────────────────────────────────────────────
+// Permite cargar un .gpx grabado en otro dispositivo (ej. móvil) para
+// probarlo en desktop, sin depender del GPS del navegador local.
+function parseGPX(xmlText) {
+  const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
+
+  const parseError = xml.querySelector('parsererror');
+  if (parseError) throw new Error('El archivo GPX no es XML válido');
+
+  const trkpts = Array.from(xml.querySelectorAll('trkpt'));
+  if (trkpts.length === 0) throw new Error('El GPX no contiene puntos de track (<trkpt>)');
+
+  const points = trkpts.map(pt => {
+    const lat = parseFloat(pt.getAttribute('lat'));
+    const lon = parseFloat(pt.getAttribute('lon'));
+    const eleEl = pt.querySelector('ele');
+    const timeEl = pt.querySelector('time');
+    const alt = eleEl ? parseFloat(eleEl.textContent) : null;
+    const ts  = timeEl ? new Date(timeEl.textContent).getTime() : Date.now();
+    return { lat, lon, alt, ts, acc: 0 };
+  }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+
+  if (points.length < 2) {
+    throw new Error(`Solo ${points.length} punto(s) válido(s) tras parsear — insuficiente`);
+  }
+
+  const nameEl = xml.querySelector('metadata > name, trk > name');
+  const { distance, elevGain, elevLoss } = computeStats(points);
+  const durationMs = points[points.length - 1].ts - points[0].ts;
+  const speed = distance / (durationMs / 3600000 || 1);
+
+  return {
+    id:        `run_imported_${Date.now()}`,
+    date:      points[0].ts,
+    points,
+    durationMs,
+    distance,
+    elevGain,
+    elevLoss,
+    avgPace:   formatPace(speed),
+    speed,
+    sourceName: nameEl?.textContent || 'Ruta importada',
+  };
+}
+
+async function handleGPXImport(file) {
+  try {
+    const text = await file.text();
+    const run  = parseGPX(text);
+    await DB.save(run);
+    showToast(`GPX importado ✓ (${run.points.length} puntos)`);
+    await loadHistory();
+  } catch (e) {
+    console.error('[GPX import]', e);
+    showToast(`Error al importar: ${e.message}`, 4000);
+  }
+}
+
 // ─── TOAST ────────────────────────────────────────────────────────────────────
 function showToast(msg, duration = 2500) {
   const el = document.getElementById('toast');
@@ -787,6 +845,16 @@ function bindEvents() {
     showScreen('screen-home');
   });
 
+  // Historial: importar GPX (útil para probar en desktop archivos del móvil)
+  document.getElementById('btn-import-gpx').addEventListener('click', () => {
+    document.getElementById('gpx-file-input').click();
+  });
+  document.getElementById('gpx-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) await handleGPXImport(file);
+    e.target.value = ''; // permite reimportar el mismo archivo si hace falta
+  });
+
   // Modal: cerrar
   document.getElementById('btn-modal-close').addEventListener('click', () => {
     document.getElementById('modal-run-detail').classList.add('hidden');
@@ -854,11 +922,35 @@ function bindEvents() {
 
 // ─── SERVICE WORKER ───────────────────────────────────────────────────────────
 function registerSW() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js')
-      .then(() => console.log('[TrailRun] SW registrado'))
-      .catch(e => console.warn('[TrailRun] SW no disponible:', e));
-  }
+  if (!('serviceWorker' in navigator)) return;
+
+  // Recarga automática una sola vez cuando un nuevo SW toma el control.
+  // Sin esto, skipWaiting()+clients.claim() en el SW no es suficiente:
+  // la pestaña sigue ejecutando el app.js viejo hasta que se recarga,
+  // así que los fixes nunca llegan a probarse aunque el deploy sea correcto.
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  navigator.serviceWorker.register('sw.js')
+    .then(reg => {
+      console.log('[TrailRun] SW registrado');
+      // Si ya hay un SW esperando (descargado pero no activado), pedirle
+      // que tome el control ya — cubre el caso de pestañas dejadas abiertas.
+      if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        newWorker?.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            newWorker.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      });
+    })
+    .catch(e => console.warn('[TrailRun] SW no disponible:', e));
 }
 
 // ─── INIT ────────────────────────────────────────────────────────────────────

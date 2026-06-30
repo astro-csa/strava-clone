@@ -4,7 +4,7 @@
    Network-first para tiles de mapa
 ═══════════════════════════════════════ */
 
-const CACHE_NAME   = 'trailrun-v5';
+const CACHE_NAME   = 'trailrun-v6';
 const TILE_CACHE   = 'trailrun-tiles-v2';
 
 const ASSETS = [
@@ -39,6 +39,11 @@ self.addEventListener('activate', e => {
       )
     ).then(() => self.clients.claim())
   );
+});
+
+// ─── MENSAJES DESDE EL CLIENTE ────────────────────────────────────────────────
+self.addEventListener('message', e => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 // ─── FETCH ───────────────────────────────────────────────────────────────────
