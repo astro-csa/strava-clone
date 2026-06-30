@@ -905,7 +905,20 @@ async function fetchSRTMElevation(points) {
     }
   }
 
-  const locations = sample.map(p => ({ latitude: p.lat, longitude: p.lon }));
+  // Validar coordenadas: Open-Elevation responde 400 si recibe lat/lon
+  // inválidos (NaN, fuera de rango, o 0,0 típico de un fix GPS fallido).
+  const isValidCoord = (lat, lon) =>
+    Number.isFinite(lat) && Number.isFinite(lon) &&
+    lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 &&
+    !(lat === 0 && lon === 0);
+
+  const locations = sample
+    .filter(p => isValidCoord(p.lat, p.lon))
+    .map(p => ({ latitude: p.lat, longitude: p.lon }));
+
+  if (locations.length === 0) {
+    throw new Error('Sin coordenadas válidas para consultar elevación');
+  }
 
   const resp = await fetch(OPEN_ELEV_URL, {
     method: 'POST',
@@ -913,7 +926,12 @@ async function fetchSRTMElevation(points) {
     body: JSON.stringify({ locations }),
   });
 
-  if (!resp.ok) throw new Error(`Open-Elevation error: ${resp.status}`);
+  if (!resp.ok) {
+    // Open-Elevation devuelve { error: "..." } con detalle del motivo del 400
+    let detail = '';
+    try { detail = (await resp.json()).error || ''; } catch {}
+    throw new Error(`Open-Elevation error: ${resp.status}${detail ? ' — ' + detail : ''}`);
+  }
   const data = await resp.json();
 
   // Mapear elevaciones SRTM de vuelta a todos los puntos (interpolación lineal)
@@ -1064,8 +1082,12 @@ function buildLayers(points3D, fullPath, progress) {
   ];
 
   // Marcador de posición actual
-  if (cutIdx < points3D.length) {
-    const cur = points3D[cutIdx];
+  // Clamp defensivo: cutIdx puede llegar a points3D.length por redondeo
+  // de punto flotante cuando progress se acerca a 1, dejando cur=undefined
+  // y rompiendo deck.gl (assertion failed en cascada).
+  const markerIdx = Math.min(cutIdx, points3D.length - 1);
+  const cur = points3D[markerIdx];
+  if (cur) {
     layers.push(
       new ScatterplotLayer({
         id: 'position-marker',
@@ -1090,7 +1112,10 @@ function animTick(points3D, fullPath) {
   if (!animPlaying) return;
 
   animProgress = Math.min(animProgress + ANIM_SPEED, 1);
-  const cutIdx = Math.floor(animProgress * (points3D.length - 1));
+  const cutIdx = Math.min(
+    Math.floor(animProgress * (points3D.length - 1)),
+    points3D.length - 1
+  );
   const cur    = points3D[cutIdx];
 
   // Actualizar deck
