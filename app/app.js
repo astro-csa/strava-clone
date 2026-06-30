@@ -969,6 +969,34 @@ async function preparePoints3D(run, onProgress) {
   });
 }
 
+// ─── ESPERAR LAYOUT REAL DEL CONTENEDOR ──────────────────────────────────────
+// Resuelve cuando el elemento tiene dimensiones > 0, usando doble rAF como
+// mínimo (deja que el navegador pinte el display:flex) y un fallback con
+// ResizeObserver por si el contenedor tarda más (animaciones CSS, fonts, etc).
+function waitForLayout(elId, timeoutMs = 1500) {
+  return new Promise(resolve => {
+    const el = document.getElementById(elId);
+    const hasSize = () => el.offsetWidth > 0 && el.offsetHeight > 0;
+
+    if (hasSize()) {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      return;
+    }
+
+    const ro = new ResizeObserver(() => {
+      if (hasSize()) {
+        ro.disconnect();
+        clearTimeout(timer);
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }
+    });
+    ro.observe(el);
+
+    // Fallback por si ResizeObserver no dispara (no debería, pero por si acaso)
+    const timer = setTimeout(() => { ro.disconnect(); resolve(); }, timeoutMs);
+  });
+}
+
 // ─── MOTOR deck.gl ────────────────────────────────────────────────────────────
 let deckInstance  = null;
 let animFrame     = null;
@@ -1113,8 +1141,11 @@ async function open3DView(run) {
     const fullPath  = points3D.map(p => [p.lon, p.lat, p.alt]);
 
     onProgress('Renderizando mapa 3D…');
-    // Pequeño delay para que el mensaje de "renderizando" sea visible
-    await new Promise(r => setTimeout(r, 200));
+
+    // El contenedor debe tener layout calculado (ancho/alto > 0) antes de
+    // inicializar deck.gl, o el canvas WebGL del mapa base colapsa a 0x0
+    // y solo se ve el ScatterplotLayer (el "punto verde") sobre fondo negro.
+    await waitForLayout('deck-container');
 
     initDeck(points3D);
 
